@@ -1,3 +1,4 @@
+// backend/index.js
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -9,18 +10,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- MODIFIKASI: LOGGING BIAR TAHU ERRORNYA DIMANA ---
+// --- KONEKSI DATABASE ---
 const connectDB = async () => {
   try {
-    // Pastikan URI terbaca
     console.log("Mencoba koneksi ke DB..."); 
     await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/janjitemu');
-    console.log('✅ MongoDB Connected (Berhasil Konek!)');
-    
-    // Jalankan Seed Admin setelah konek
-    seedAdmin();
+    console.log('✅ MongoDB Connected');
+    seedData(); // Seed Admin & Layanan Default
   } catch (err) {
-    console.error('❌ Gagal Konek Database. Cek Password di .env!', err.message);
+    console.error('❌ Gagal Konek Database:', err.message);
   }
 };
 connectDB();
@@ -34,34 +32,48 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
+// Model Layanan (BARU: Agar Admin bisa edit layanan)
+const ServiceSchema = new mongoose.Schema({
+  nama: { type: String, required: true },
+  deskripsi: String
+});
+const Service = mongoose.model('Service', ServiceSchema);
+
 const AppointmentSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  customerName: String,
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Bisa null jika admin yang input (walk-in)
+  customerName: String, // Nama Customer
   layanan: { type: String, required: true },
   tanggal: Date,
-  status: { type: String, default: 'Pending' }
+  waktu: String, // Tambahan field waktu jika perlu spesifik
+  status: { type: String, default: 'Pending' } // Pending, Approved, Rejected, Completed
 });
 const Appointment = mongoose.model('Appointment', AppointmentSchema);
 
-// --- SEED ADMIN (DIPERBAIKI) ---
-const seedAdmin = async () => {
-  try {
-    const adminExist = await User.findOne({ email: 'admin@janjitemu.com' });
-    if (!adminExist) {
-      console.log("⏳ Sedang membuat akun admin...");
-      const hash = await bcrypt.hash('admin123', 10);
-      await User.create({
-        username: 'Admin Master',
-        email: 'admin@janjitemu.com',
-        password: hash,
-        role: 'admin'
-      });
-      console.log('✅ Akun Admin Berhasil Dibuat: admin@janjitemu.com / admin123');
-    } else {
-      console.log('ℹ️ Akun Admin Sudah Ada (Siap Login)');
-    }
-  } catch (error) {
-    console.log("Gagal membuat admin:", error.message);
+// --- SEED DATA (Admin & Layanan Awal) ---
+const seedData = async () => {
+  // 1. Seed Admin
+  const adminExist = await User.findOne({ email: 'admin@janjitemu.com' });
+  if (!adminExist) {
+    const hash = await bcrypt.hash('admin123', 10);
+    await User.create({
+      username: 'Admin Master',
+      email: 'admin@janjitemu.com',
+      password: hash,
+      role: 'admin'
+    });
+    console.log('✅ Akun Admin: admin@janjitemu.com / admin123');
+  }
+
+  // 2. Seed Layanan Default (Jika kosong)
+  const servicesExist = await Service.countDocuments();
+  if (servicesExist === 0) {
+    await Service.insertMany([
+      { nama: 'Badan Usaha', deskripsi: 'Pendirian PT, CV, Yayasan' },
+      { nama: 'Perdata', deskripsi: 'Konsultasi Hukum Perdata' },
+      { nama: 'Tata Negara', deskripsi: 'Hukum Tata Negara' },
+      { nama: 'OPHI', deskripsi: 'Optimalisasi Hak Intelektual' }
+    ]);
+    console.log('✅ Layanan Default Dibuat');
   }
 };
 
@@ -69,7 +81,7 @@ const authenticate = (req, res, next) => {
   const token = req.headers.authorization;
   if (!token) return res.status(401).json({ msg: 'No token' });
   try {
-    const decoded = jwt.verify(token, 'SECRET_KEY_RAHASIA');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     next();
   } catch (err) {
@@ -77,51 +89,69 @@ const authenticate = (req, res, next) => {
   }
 };
 
-// --- ROUTES DENGAN DEBUGGING ---
+// --- ROUTES ---
 
+// AUTH
 app.post('/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     await User.create({ username, email, password: hashedPassword });
     res.json({ msg: 'Register Berhasil' });
-  } catch (err) { res.status(500).json({ msg: 'Email sudah terdaftar/Error' }); }
+  } catch (err) { res.status(500).json({ msg: 'Email sudah terdaftar' }); }
 });
 
-// LOGIN DENGAN LOGGING LENGKAP
 app.post('/login', async (req, res) => {
-  console.log("📥 Menerima Request Login:", req.body.email); // Debug Print
   try {
     const { email, password } = req.body;
-    
-    // Cek User
     const user = await User.findOne({ email });
-    if (!user) {
-      console.log("❌ User tidak ditemukan di database");
-      return res.status(400).json({ msg: 'User tidak ditemukan' });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(400).json({ msg: 'Email atau Password Salah' });
     }
-
-    // Cek Password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      console.log("❌ Password Salah");
-      return res.status(400).json({ msg: 'Password salah' });
-    }
-
-    console.log("✅ Login Berhasil untuk:", user.username);
-    const token = jwt.sign({ id: user._id, role: user.role, name: user.username }, 'SECRET_KEY_RAHASIA');
+    const token = jwt.sign(
+    { id: user._id, role: user.role, name: user.username }, 
+    process.env.JWT_SECRET, // <--- Ambil dari .env
+    { expiresIn: '1d' } // Opsional: Token expired dalam 1 hari
+);
     res.json({ token, role: user.role, username: user.username });
-
-  } catch (err) { 
-    console.log("❌ Error Server:", err);
-    res.status(500).json({ msg: 'Server Error' }); 
-  }
+  } catch (err) { res.status(500).json({ msg: 'Server Error' }); }
 });
 
+// LAYANAN ROUTES (CRUD untuk Admin)
+app.get('/services', async (req, res) => {
+  const services = await Service.find();
+  res.json(services);
+});
+
+app.post('/services', authenticate, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ msg: 'Akses Ditolak' });
+  try {
+    await Service.create(req.body);
+    res.json({ msg: 'Layanan ditambahkan' });
+  } catch (err) { res.status(500).json(err); }
+});
+
+app.put('/services/:id', authenticate, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ msg: 'Akses Ditolak' });
+  try {
+    await Service.findByIdAndUpdate(req.params.id, req.body);
+    res.json({ msg: 'Layanan diupdate' });
+  } catch (err) { res.status(500).json(err); }
+});
+
+app.delete('/services/:id', authenticate, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ msg: 'Akses Ditolak' });
+  try {
+    await Service.findByIdAndDelete(req.params.id);
+    res.json({ msg: 'Layanan dihapus' });
+  } catch (err) { res.status(500).json(err); }
+});
+
+// APPOINTMENT ROUTES
 app.get('/appointments', authenticate, async (req, res) => {
   try {
     if (req.user.role === 'admin') {
-      const data = await Appointment.find();
+      const data = await Appointment.find().sort({ tanggal: 1 }); // Urutkan tanggal
       res.json(data);
     } else {
       const data = await Appointment.find({ userId: req.user.id });
@@ -132,10 +162,14 @@ app.get('/appointments', authenticate, async (req, res) => {
 
 app.post('/appointments', authenticate, async (req, res) => {
   try {
-    const { layanan, tanggal } = req.body;
+    const { layanan, tanggal, customerName } = req.body;
+    // Jika Admin yang buat, customerName dari input. Jika user, dari token.
+    const name = req.user.role === 'admin' ? customerName : req.user.name;
+    const uId = req.user.role === 'admin' ? null : req.user.id; // Admin bikin buat tamu (bukan user terdaftar)
+    
     await Appointment.create({
-      userId: req.user.id,
-      customerName: req.user.name,
+      userId: uId,
+      customerName: name,
       layanan,
       tanggal,
     });
@@ -143,14 +177,19 @@ app.post('/appointments', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ msg: 'Error' }); }
 });
 
+// Update Appointment (Admin: Edit Janji, Status, Tanggal)
 app.put('/appointments/:id', authenticate, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ msg: 'Akses ditolak' });
+  if (req.user.role !== 'admin') return res.status(403).json({ msg: 'Akses Ditolak' });
   try {
-    const { status } = req.body;
-    await Appointment.findByIdAndUpdate(req.params.id, { status });
-    res.json({ msg: 'Status updated' });
+    // req.body bisa berisi { status, tanggal, layanan }
+    await Appointment.findByIdAndUpdate(req.params.id, req.body);
+    res.json({ msg: 'Data janji diperbarui' });
   } catch (err) { res.status(500).json({ msg: 'Error' }); }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// PORT Handling for Vercel
+if (require.main === module) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+module.exports = app;
