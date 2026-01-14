@@ -7,18 +7,22 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [role, setRole] = useState(localStorage.getItem('role'));
+  // [BARU] Simpan username di state
+  const [username, setUsername] = useState(localStorage.getItem('username')); 
   const [view, setView] = useState('login'); 
 
   const logout = () => {
     localStorage.clear();
     setToken(null);
     setRole(null);
+    setUsername(null); // [BARU] Hapus username saat logout
     setView('login');
   };
 
   if (!token) {
     if (view === 'register') return <Register setView={setView} />;
-    return <Login setToken={setToken} setRole={setRole} setView={setView} />;
+    // [BARU] Kirim setUsername ke Login component
+    return <Login setToken={setToken} setRole={setRole} setUsername={setUsername} setView={setView} />;
   }
 
   return (
@@ -26,10 +30,13 @@ function App() {
       <nav className="bg-blue-700 text-white p-4 shadow-lg flex justify-between items-center sticky top-0 z-50">
         <h1 className="text-xl font-bold tracking-wide">JanjiTemu System</h1>
         <div className="flex gap-4 items-center">
+          
+          {/* [BARU] TAMPILAN USERNAME */}
           <div className="text-right hidden sm:block">
-            <p className="text-xs text-blue-200">Logged as</p>
-            <p className="font-semibold capitalize">{role}</p>
+            <p className="text-xs text-blue-200">Halo,</p>
+            <p className="font-bold text-lg capitalize">{username || role}</p>
           </div>
+
           <button onClick={logout} className="bg-red-500 hover:bg-red-600 px-4 py-2 rounded shadow transition text-sm font-bold">Log Out</button>
         </div>
       </nav>
@@ -40,28 +47,56 @@ function App() {
 }
 
 // --- LOGIN & REGISTER ---
-function Login({ setToken, setRole, setView }) {
-  const [email, setEmail] = useState('');
+function Login({ setToken, setRole, setUsername, setView }) {
+  // [BARU] Ubah nama state jadi identifier (bisa email atau username)
+  const [identifier, setIdentifier] = useState(''); 
   const [password, setPassword] = useState('');
 
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post(`${API_URL}/login`, { email, password });
+      // [BARU] Kirim identifier sebagai 'email' karena backend membacanya dari req.body.email
+      const res = await axios.post(`${API_URL}/login`, { email: identifier, password });
+      
+      // Simpan Token & Role
       localStorage.setItem('token', res.data.token);
       localStorage.setItem('role', res.data.role);
+      
+      // [BARU] Simpan Username
+      localStorage.setItem('username', res.data.username); 
+
+      // Update State Aplikasi
       setToken(res.data.token);
       setRole(res.data.role);
-    } catch (err) { alert('Login Gagal: Cek Email/Password'); }
+      setUsername(res.data.username); 
+
+    } catch (err) { 
+      // Tampilkan pesan error dari backend jika ada
+      alert(err.response?.data?.msg || 'Login Gagal: Cek Username/Email & Password'); 
+    }
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-200 p-4">
       <form onSubmit={handleLogin} className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
-        <h2 className="text-3xl font-bold mb-6 text-center text-blue-700">Masuk Admin/User</h2>
+        <h2 className="text-3xl font-bold mb-6 text-center text-blue-700">Masuk Aplikasi</h2>
         <div className="space-y-4">
-          <input className="border w-full p-3 rounded bg-gray-50 focus:ring-2 ring-blue-500 outline-none" placeholder="Email / Username" value={email} onChange={e=>setEmail(e.target.value)} required />
-          <input className="border w-full p-3 rounded bg-gray-50 focus:ring-2 ring-blue-500 outline-none" type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} required />
+          {/* [BARU] Placeholder diganti */}
+          <input 
+            className="border w-full p-3 rounded bg-gray-50 focus:ring-2 ring-blue-500 outline-none" 
+            placeholder="Email atau Username" 
+            value={identifier} 
+            onChange={e=>setIdentifier(e.target.value)} 
+            required 
+          />
+          <input 
+            className="border w-full p-3 rounded bg-gray-50 focus:ring-2 ring-blue-500 outline-none" 
+            type="password" 
+            placeholder="Password" 
+            value={password} 
+            onChange={e=>setPassword(e.target.value)} 
+            required 
+          />
           <button className="bg-blue-600 text-white w-full p-3 rounded font-bold hover:bg-blue-700 transition transform hover:scale-105">MASUK</button>
         </div>
         <p className="mt-6 text-center text-sm">
@@ -80,7 +115,7 @@ function Register({ setView }) {
       await axios.post(`${API_URL}/register`, formData);
       alert('Registrasi Berhasil! Silakan Login.');
       setView('login');
-    } catch (err) { alert('Gagal Registrasi'); }
+    } catch (err) { alert('Gagal Registrasi (Username/Email mungkin sudah dipakai)'); }
   };
 
   return (
@@ -88,7 +123,7 @@ function Register({ setView }) {
       <form onSubmit={handleRegis} className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md">
         <h2 className="text-2xl font-bold mb-6 text-center text-green-600">Register Customer</h2>
         <div className="space-y-4">
-          <input className="border w-full p-3 rounded" placeholder="Nama Lengkap" onChange={e=>setForm({...formData, username:e.target.value})} required />
+          <input className="border w-full p-3 rounded" placeholder="Username (Tanpa spasi)" onChange={e=>setForm({...formData, username:e.target.value})} required />
           <input className="border w-full p-3 rounded" placeholder="Email" onChange={e=>setForm({...formData, email:e.target.value})} required />
           <input className="border w-full p-3 rounded" type="password" placeholder="Password" onChange={e=>setForm({...formData, password:e.target.value})} required />
           <button className="bg-green-600 text-white w-full p-3 rounded font-bold hover:bg-green-700 transition">DAFTAR</button>

@@ -101,20 +101,39 @@ app.post('/register', async (req, res) => {
   } catch (err) { res.status(500).json({ msg: 'Email sudah terdaftar' }); }
 });
 
+// --- CARI BAGIAN INI DAN GANTI LOGIKANYA ---
 app.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
+    // Kita terima input sebagai "identifier" (bisa email atau username)
+    const { email, password } = req.body; 
+    
+    // CARI USER: Cek apakah input cocok dengan EMAIL atau USERNAME
+    const user = await User.findOne({
+      $or: [
+        { email: email },      // Cek kolom email
+        { username: email }    // Cek kolom username
+      ]
+    });
+
+    // Jika user tidak ditemukan atau password salah
     if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(400).json({ msg: 'Email atau Password Salah' });
+      return res.status(400).json({ msg: 'Username/Email atau Password Salah' });
     }
+
+    // Buat Token
     const token = jwt.sign(
-    { id: user._id, role: user.role, name: user.username }, 
-    process.env.JWT_SECRET, // <--- Ambil dari .env
-    { expiresIn: '1d' } // Opsional: Token expired dalam 1 hari
-);
+      { id: user._id, role: user.role, name: user.username }, 
+      process.env.JWT_SECRET || 'SECRET_KEY_RAHASIA', // Gunakan env kamu
+      { expiresIn: '1d' }
+    );
+
+    // Kirim data username juga ke frontend
     res.json({ token, role: user.role, username: user.username });
-  } catch (err) { res.status(500).json({ msg: 'Server Error' }); }
+    
+  } catch (err) { 
+    console.error(err);
+    res.status(500).json({ msg: 'Server Error' }); 
+  }
 });
 
 // LAYANAN ROUTES (CRUD untuk Admin)
